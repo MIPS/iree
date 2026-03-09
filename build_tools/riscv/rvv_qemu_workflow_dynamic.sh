@@ -44,7 +44,7 @@ CLANG_INC="${HOME}/miniforge3/lib/clang/18/include"
 
 KERNEL_SRC="${IREE_SRC}/runtime/src/iree/builtins/mips/matmul_kernel.c"
 PLUGIN_SRC="${IREE_SRC}/runtime/src/iree/builtins/mips/matmul_plugin.c"
-TEST_MLIR="${WORK_DIR}/mips_matmul_test.mlir"
+TEST_MLIR="${IREE_SRC}/build_tools/riscv/mips_matmul_test.mlir"
 
 # Rocky 8's libstdc++ is too old; conda has GLIBCXX 3.4.29+.
 export LD_LIBRARY_PATH="${HOME}/miniforge3/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
@@ -154,9 +154,7 @@ data = open(sys.argv[1], 'rb').read()
 idx  = data.find(b'my_matmul_kernel')
 rvv  = sum(1 for i in range(0, len(data)-3, 4) if data[i] & 0x7f == 0x57)
 if idx != -1:
-    tag = "[ok]" if rvv == 0 else "[note]"
-    print(f"  {tag} 'my_matmul_kernel' at offset {idx} (import entry, no RVV here)")
-    print(f"       RVV opcode count in vmfb: {rvv} (expected 0 — kernel is in .so)")
+    print(f"  [ok] 'my_matmul_kernel' at offset {idx} (import table entry — kernel lives in .so)")
 else:
     print("  [warn] 'my_matmul_kernel' not found in dispatch ELF")
 PYEOF

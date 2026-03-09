@@ -44,7 +44,7 @@ LLD="${HOME}/miniforge3/bin/ld.lld"
 CLANG_INC="${HOME}/miniforge3/lib/clang/18/include"
 
 KERNEL_SRC="${IREE_SRC}/runtime/src/iree/builtins/mips/matmul_kernel.c"
-TEST_MLIR="${WORK_DIR}/mips_matmul_test.mlir"
+TEST_MLIR="${IREE_SRC}/build_tools/riscv/mips_matmul_test.mlir"
 
 # Rocky 8's libstdc++ is too old; conda has GLIBCXX 3.4.29+.
 export LD_LIBRARY_PATH="${HOME}/miniforge3/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
