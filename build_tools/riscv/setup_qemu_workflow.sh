@@ -25,6 +25,7 @@ WORK_DIR="${HOME}/MLIR_Work/mips"
 IREE_SRC="${WORK_DIR}/iree"
 
 HOST_BUILD="${WORK_DIR}/iree-build"          # iree-opt, iree-compile (x86)
+HOST_INSTALL="${HOST_BUILD}/install"         # installed host tools
 RISCV_BUILD="${WORK_DIR}/iree-build-riscv"   # iree-run-module (RISC-V)
 QEMU_VER="8.2.2"
 INSTALL_PREFIX="${HOME}/local"               # qemu-riscv64 installed here
@@ -199,6 +200,7 @@ step4_iree_host() {
     -DCMAKE_ASM_COMPILER="${CLANG}" \
     -DCMAKE_C_COMPILER_LAUNCHER=ccache \
     -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
+    -DCMAKE_INSTALL_PREFIX="${HOST_INSTALL}" \
     -DIREE_ENABLE_ASSERTIONS=ON \
     -DIREE_ENABLE_SPLIT_DWARF=ON \
     -DIREE_ENABLE_LLD=ON \
@@ -213,11 +215,15 @@ step4_iree_host() {
     -DHAVE_POSIX_REGEX=OFF
 
   echo "  Building ($(nproc) jobs)..."
-  "${NINJA}" -C "${HOST_BUILD}" -j"$(nproc)" iree-opt iree-compile iree-run-module
+  "${NINJA}" -C "${HOST_BUILD}" -j"$(nproc)" iree-opt iree-compile iree-run-module iree-tblgen
 
-  ok "iree-opt:      ${HOST_BUILD}/tools/iree-opt"
-  ok "iree-compile:  ${HOST_BUILD}/tools/iree-compile"
-  ok "iree-run-module (host): ${HOST_BUILD}/tools/iree-run-module"
+  echo "  Installing host tools to ${HOST_INSTALL}..."
+  "${NINJA}" -C "${HOST_BUILD}" install/fast
+
+  ok "iree-opt:           ${HOST_INSTALL}/bin/iree-opt"
+  ok "iree-compile:       ${HOST_INSTALL}/bin/iree-compile"
+  ok "iree-run-module:    ${HOST_INSTALL}/bin/iree-run-module"
+  ok "iree-tblgen:        ${HOST_INSTALL}/bin/iree-tblgen"
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -226,8 +232,8 @@ step4_iree_host() {
 step5_iree_riscv() {
   log "STEP 5: Build IREE (RISC-V cross — iree-run-module for riscv64)"
 
-  [[ -f "${HOST_BUILD}/bin/iree-tblgen" ]] || \
-    die "Host tools not found at ${HOST_BUILD}/bin — run step 4 first."
+  [[ -f "${HOST_INSTALL}/bin/iree-tblgen" ]] || \
+    die "Host install not found at ${HOST_INSTALL}/bin — run step 4 first."
 
   mkdir -p "${RISCV_BUILD}"
 
@@ -236,7 +242,7 @@ step5_iree_riscv() {
     -DCMAKE_MAKE_PROGRAM="${NINJA}" \
     -DCMAKE_BUILD_TYPE=RelWithDebInfo \
     -DCMAKE_TOOLCHAIN_FILE="${IREE_SRC}/build_tools/cmake/riscv.toolchain.cmake" \
-    -DIREE_HOST_BIN_DIR="${HOST_BUILD}/bin" \
+    -DIREE_HOST_BIN_DIR="${HOST_INSTALL}/bin" \
     -DRISCV_TOOLCHAIN_ROOT="${RISCV_TOOLCHAIN}" \
     -DIREE_BUILD_COMPILER=OFF \
     -DIREE_TARGET_BACKEND_DEFAULTS=OFF \
