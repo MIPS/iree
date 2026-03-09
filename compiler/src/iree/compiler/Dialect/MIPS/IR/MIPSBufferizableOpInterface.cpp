@@ -32,6 +32,7 @@
 
 #include "iree/compiler/Dialect/MIPS/IR/MIPSDialect.h"
 #include "iree/compiler/Dialect/MIPS/IR/MIPSOps.h"
+#include "llvm/Support/CommandLine.h"
 #include "mlir/Dialect/Bufferization/IR/BufferizableOpInterface.h"
 #include "mlir/Dialect/Bufferization/IR/DstBufferizableOpInterfaceImpl.h"
 #include "mlir/Dialect/Func/IR/FuncOps.h"
@@ -43,6 +44,19 @@
 
 using namespace mlir;
 using namespace mlir::bufferization;
+
+// When true, my_matmul_kernel is emitted as a direct linker-resolved call
+// (hal.import.static) instead of a dynamic HAL import table entry.
+// Pass --iree-mips-static-embedding to iree-compile to enable.
+// Mutually exclusive with --executable_plugin at runtime.
+static llvm::cl::opt<bool> clMIPSStaticEmbedding(
+    "iree-mips-static-embedding",
+    llvm::cl::desc(
+        "Emit my_matmul_kernel as a direct linker-resolved call "
+        "(hal.import.static) instead of a dynamic HAL import. "
+        "Requires the kernel .o to be appended by lld_wrapper at compile "
+        "time. Mutually exclusive with --executable_plugin at runtime."),
+    llvm::cl::init(false));
 
 namespace mlir::iree_compiler::IREE::MIPS {
 namespace {
@@ -69,6 +83,12 @@ static func::FuncOp ensureKernelDeclaration(RewriterBase &rewriter,
   auto fnDecl = func::FuncOp::create(rewriter, loc, kKernelName, fnType);
   SymbolTable::setSymbolVisibility(fnDecl, SymbolTable::Visibility::Private);
   fnDecl->setAttr("llvm.bareptr", rewriter.getBoolAttr(true));
+  // If --iree-mips-static-embedding was passed to iree-compile, emit a direct
+  // linker call instead of a dynamic HAL import table entry.
+  // Without this flag the call goes through the HAL import table, which lets
+  // the runtime resolve it from an --executable_plugin .so at run time.
+  if (clMIPSStaticEmbedding)
+    fnDecl->setAttr("hal.import.static", rewriter.getUnitAttr());
   return fnDecl;
 }
 

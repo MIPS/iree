@@ -13,7 +13,8 @@
 
 set -e  # exit on first error
 
-BUILD=/Users/gauravshukla/MLIR_Work/mips/iree-build
+export LD_LIBRARY_PATH="$HOME/miniforge3/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
+BUILD=$HOME/MLIR_Work/mips/iree-build
 IREE_OPT=$BUILD/tools/iree-opt
 IREE_COMPILE=$BUILD/tools/iree-compile
 

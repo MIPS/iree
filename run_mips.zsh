@@ -10,9 +10,12 @@
 #
 # Test: A * I = A  (multiply by 4x4 identity → expect the same matrix back)
 
-BUILD=/Users/gauravshukla/MLIR_Work/mips/iree-build
-KERNEL_LIB=$BUILD/runtime/src/iree/builtins/mips/libmy_matmul_kernel.dylib
+BUILD=$HOME/MLIR_Work/mips/iree-build
+KERNEL_LIB=$BUILD/runtime/src/iree/builtins/mips/libmy_matmul_kernel.so
 IREE_RUN=$BUILD/tools/iree-run-module
+
+# conda libstdc++ must be visible when iree-run-module dlopen()s the .so
+export LD_LIBRARY_PATH="$HOME/miniforge3/lib${LD_LIBRARY_PATH:+:${LD_LIBRARY_PATH}}"
 VMFB=/tmp/mm_mips.vmfb
 
 if [[ ! -f $VMFB ]]; then
