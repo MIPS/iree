@@ -6,18 +6,18 @@
 
 # Shared library containing the MIPS custom matmul kernel.
 #
-# The kernel is exposed as an IREE executable plugin (implements
-# iree_hal_executable_plugin_query) so that iree-run-module can load it via:
-#   iree-run-module --executable_plugin=libmy_matmul_kernel.dylib ...
+# matmul_kernel.c — RVV (or scalar fallback) compute kernel; no IREE headers.
+# matmul_plugin.c — IREE HAL executable plugin interface.
 #
-# The IREE runtime resolves the @my_matmul_kernel import from the dispatch
-# executable through this plugin's resolve() function.
+# The plugin is loaded at runtime via:
+#   iree-run-module --executable_plugin=libmips_matmul.so ...
 
-add_library(my_matmul_kernel SHARED
-  my_matmul_kernel.c
+add_library(mips_matmul SHARED
+  matmul_kernel.c
+  matmul_plugin.c
 )
 
-target_include_directories(my_matmul_kernel
+target_include_directories(mips_matmul
   PUBLIC
     ${CMAKE_CURRENT_SOURCE_DIR}
   PRIVATE
@@ -25,7 +25,7 @@ target_include_directories(my_matmul_kernel
     ${PROJECT_SOURCE_DIR}/runtime/src
 )
 
-set_target_properties(my_matmul_kernel PROPERTIES
+set_target_properties(mips_matmul PROPERTIES
   C_VISIBILITY_PRESET default
   POSITION_INDEPENDENT_CODE ON
 )
