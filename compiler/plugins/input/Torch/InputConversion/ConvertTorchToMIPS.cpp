@@ -15,7 +15,6 @@
 //   3. Emits mips.matmul on builtin tensors.
 //   4. Casts the result back to ValueTensorType via FromBuiltinTensorOp.
 //
-// This mirrors the approach in ConvertTorchUnstructuredToLinalgExt.cpp.
 
 #include "compiler/plugins/input/Torch/InputConversion/Passes.h"
 #include "iree/compiler/Dialect/MIPS/IR/MIPSOps.h"

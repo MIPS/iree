@@ -34,8 +34,9 @@ def ConvertTorchToMIPSPass :
   let summary = "Convert torch.aten.mm to mips.matmul";
   let description = [{
     Intercepts torch.aten.mm before the standard torch->linalg conversion and
-    replaces it with mips.matmul. The mips.matmul op is later lowered to a
-    func.call @my_matmul_kernel by LowerMIPSToFuncCallPass after bufferization.
+    replaces it with mips.matmul. The mips.matmul op is eliminated entirely
+    during One-Shot Bufferize: MIPSBufferizableOpInterface emits a direct
+    func.call @my_matmul_kernel with decomposed memref arguments.
   }];
 }
 
