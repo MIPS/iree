@@ -10,10 +10,15 @@
 // eliminated *entirely* during One-Shot Bufferize: bufferize() obtains memref
 // buffers for all three operands, decomposes each 2-D memref into
 // (base_ptr, offset, stride0, stride1) via memref.extract_strided_metadata,
-// and emits a func.call @my_matmul_kernel directly.  No memref form of
-// mips.matmul ever exists in the IR.
+// and emits a func.call to the appropriate kernel directly.
 //
-// Before bufferization:
+// The kernel is selected based on the LHS element type:
+//   f32  → func.call @my_matmul_kernel      (f32 × f32 → f32)
+//   i8   → func.call @my_matmul_kernel_i8   (i8  × i8  → i32)
+//
+// No memref form of mips.matmul ever exists in the IR.
+//
+// Before bufferization (f32 example):
 //   %C = mips.matmul %A, %B, %init
 //       : tensor<MxKxf32>, tensor<KxNxf32>, tensor<MxNxf32> -> tensor<MxNxf32>
 //
@@ -29,6 +34,9 @@
 //                          %C_base, %C_off, %C_s0, %C_s1,
 //                          %M, %N, %K)
 //   -- tensor result replaced by %C_buf via replaceOpWithBufferizedValues --
+//
+// The INT8 path is identical but uses memref<i8> / memref<i32> base pointers
+// and calls @my_matmul_kernel_i8 instead.
 
 #include "iree/compiler/Dialect/MIPS/IR/MIPSDialect.h"
 #include "iree/compiler/Dialect/MIPS/IR/MIPSOps.h"
@@ -45,15 +53,15 @@
 using namespace mlir;
 using namespace mlir::bufferization;
 
-// When true, my_matmul_kernel is emitted as a direct linker-resolved call
-// (hal.import.static) instead of a dynamic HAL import table entry.
+// When true, matmul kernels are emitted as direct linker-resolved calls
+// (hal.import.static) instead of dynamic HAL import table entries.
 // Pass --iree-mips-static-embedding to iree-compile to enable.
 // Mutually exclusive with --executable_plugin at runtime.
 static llvm::cl::opt<bool> clMIPSStaticEmbedding(
     "iree-mips-static-embedding",
     llvm::cl::desc(
-        "Emit my_matmul_kernel as a direct linker-resolved call "
-        "(hal.import.static) instead of a dynamic HAL import. "
+        "Emit mips matmul kernels as direct linker-resolved calls "
+        "(hal.import.static) instead of dynamic HAL imports. "
         "Requires the kernel .o to be appended by lld_wrapper at compile "
         "time. Mutually exclusive with --executable_plugin at runtime."),
     llvm::cl::init(false));
@@ -61,32 +69,32 @@ static llvm::cl::opt<bool> clMIPSStaticEmbedding(
 namespace mlir::iree_compiler::IREE::MIPS {
 namespace {
 
-static constexpr StringLiteral kKernelName = "my_matmul_kernel";
+static constexpr StringLiteral kKernelF32 = "my_matmul_kernel";
+static constexpr StringLiteral kKernelI8  = "my_matmul_kernel_i8";
 
 //===----------------------------------------------------------------------===//
-// Helper: ensure func.func private @my_matmul_kernel exists at module scope.
+// Helper: ensure func.func private @<kernelName> exists at module scope.
 //
 // The declaration carries {llvm.bareptr = true} so the LLVM backend passes
-// bare float* arguments instead of MLIR memref descriptor structs, matching
+// bare pointer arguments instead of MLIR memref descriptor structs, matching
 // the C kernel ABI.
 //===----------------------------------------------------------------------===//
 
 static func::FuncOp ensureKernelDeclaration(RewriterBase &rewriter,
                                              Operation *moduleOp,
+                                             StringRef kernelName,
                                              FunctionType fnType,
                                              Location loc) {
   if (auto existing = dyn_cast_if_present<func::FuncOp>(
-          SymbolTable::lookupSymbolIn(moduleOp, kKernelName)))
+          SymbolTable::lookupSymbolIn(moduleOp, kernelName)))
     return existing;
   OpBuilder::InsertionGuard guard(rewriter);
   rewriter.setInsertionPointToStart(&moduleOp->getRegion(0).front());
-  auto fnDecl = func::FuncOp::create(rewriter, loc, kKernelName, fnType);
+  auto fnDecl = func::FuncOp::create(rewriter, loc, kernelName, fnType);
   SymbolTable::setSymbolVisibility(fnDecl, SymbolTable::Visibility::Private);
   fnDecl->setAttr("llvm.bareptr", rewriter.getBoolAttr(true));
-  // If --iree-mips-static-embedding was passed to iree-compile, emit a direct
-  // linker call instead of a dynamic HAL import table entry.
-  // Without this flag the call goes through the HAL import table, which lets
-  // the runtime resolve it from an --executable_plugin .so at run time.
+  // If --iree-mips-static-embedding was passed, emit a direct linker call
+  // instead of a dynamic HAL import table entry.
   if (clMIPSStaticEmbedding)
     fnDecl->setAttr("hal.import.static", rewriter.getUnitAttr());
   return fnDecl;
@@ -96,19 +104,19 @@ static func::FuncOp ensureKernelDeclaration(RewriterBase &rewriter,
 // Helper: decompose a 2-D memref into (base_ptr, offset, stride0, stride1).
 //
 // Uses memref.extract_strided_metadata.  The base_ptr is always a rank-0
-// memref with DEFAULT address space (memref<f32>), regardless of the source
-// memref's address space.  Any IREE-specific memory space (e.g.
+// memref with DEFAULT address space (memref<elem_type>), regardless of the
+// source memref's address space.  Any IREE-specific memory space (e.g.
 // #hal.descriptor_type<storage_buffer>) is stripped via
 // memref.memory_space_cast so that:
 //
-//   1. The function declaration uses plain memref<f32>, which is stable across
-//      all pipeline stages.
+//   1. The function declaration uses plain memref<elem_type>, which is stable
+//      across all pipeline stages.
 //   2. eraseHALDescriptorTypeFromMemRefPass (which runs after bufferization and
 //      does NOT update external function declarations) cannot introduce a
 //      type mismatch between the call operands and the declaration.
 //
 // Combined with the {llvm.bareptr = true} attribute on the callee, the
-// rank-0 memref<f32> lowers to a bare float* matching the C ABI.
+// rank-0 memref<elem_type> lowers to a bare pointer matching the C ABI.
 //===----------------------------------------------------------------------===//
 
 static void decomposeMemref2D(RewriterBase &rewriter, Location loc,
@@ -149,7 +157,8 @@ static void decomposeMemref2D(RewriterBase &rewriter, Location loc,
 // Inherits from DstBufferizableOpInterfaceExternalModel which automatically
 // handles the DPS aliasing (init ↔ result) and write detection for the init
 // operand.  We override bufferizesToMemoryRead to mark lhs and rhs as read,
-// and provide a custom bufferize() that emits func.call @my_matmul_kernel.
+// and provide a custom bufferize() that selects the right kernel based on the
+// LHS element type.
 //===----------------------------------------------------------------------===//
 
 struct MIPSMatmulBufferizableOpInterface
@@ -182,14 +191,27 @@ struct MIPSMatmulBufferizableOpInterface
     if (failed(rhsBuf))
       return failure();
     // init aliases with result — one-shot bufferize allocates the output buffer
-    // (via bufferization.alloc_tensor or in-place analysis) and gives it to us
-    // here as initBuf.
+    // (via bufferization.alloc_tensor or in-place analysis) and gives it here.
     FailureOr<Value> initBuf =
         getBuffer(rewriter, matmulOp.getInit(), options, state);
     if (failed(initBuf))
       return failure();
 
-    // Build the flattened argument list for func.call @my_matmul_kernel.
+    // Select the kernel based on LHS element type.
+    Type lhsElemTy = cast<MemRefType>(lhsBuf->getType()).getElementType();
+    StringRef kernelName;
+    if (lhsElemTy.isF32()) {
+      kernelName = kKernelF32;
+    } else if (lhsElemTy.isInteger(8)) {
+      kernelName = kKernelI8;
+    } else {
+      return matmulOp.emitOpError(
+          "MIPSBufferizableOpInterface: unsupported LHS element type '")
+             << lhsElemTy
+             << "'; supported types are f32 and i8";
+    }
+
+    // Build the flattened argument list for the kernel call.
     //   For each 2-D memref: (base_ptr, offset, stride0, stride1)
     //   Then: M, N, K as index scalars.
     SmallVector<Value> callOperands;
@@ -209,10 +231,10 @@ struct MIPSMatmulBufferizableOpInterface
     // Declare the kernel function in the enclosing module (idempotent).
     Operation *moduleOp = SymbolTable::getNearestSymbolTable(matmulOp);
     FunctionType fnType = rewriter.getFunctionType(callArgTypes, TypeRange{});
-    ensureKernelDeclaration(rewriter, moduleOp, fnType, loc);
+    ensureKernelDeclaration(rewriter, moduleOp, kernelName, fnType, loc);
 
     // Emit the call — the kernel writes into *initBuf in place.
-    func::CallOp::create(rewriter, loc, kKernelName, TypeRange{}, callOperands);
+    func::CallOp::create(rewriter, loc, kernelName, TypeRange{}, callOperands);
 
     // Replace the tensor result with the init buffer (DPS aliasing).
     replaceOpWithBufferizedValues(rewriter, op, *initBuf);

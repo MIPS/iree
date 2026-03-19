@@ -79,11 +79,24 @@ LogicalResult MatmulOp::verify() {
   if (!compat(shape(getRhs())[1], shape(getInit())[1]))
     return emitOpError("rhs dim 1 (N) must match init dim 1 (N)");
 
-  // All element types must match.
-  if (elemTy(getLhs()) != elemTy(getRhs()) || elemTy(getLhs()) != elemTy(getInit()))
-    return emitOpError("element types of all operands must match");
+  // LHS and RHS element types must match.
+  if (elemTy(getLhs()) != elemTy(getRhs()))
+    return emitOpError("lhs and rhs element types must match");
 
-  // Result type must match init type (both tensor<MxNxf32>).
+  // Supported element type combinations:
+  //   f32  × f32  → f32   (standard float matmul)
+  //   i8   × i8   → i32   (INT8 widening matmul)
+  Type lhsElem = elemTy(getLhs());
+  Type outElem = elemTy(getInit());
+  bool valid = (lhsElem == outElem) ||
+               (lhsElem.isInteger(8) && outElem.isInteger(32));
+  if (!valid)
+    return emitOpError(
+        "unsupported element type combination: lhs=")
+        << lhsElem << ", output=" << outElem
+        << "; supported: f32×f32→f32, i8×i8→i32";
+
+  // Result type must match init type.
   if (getResult().getType() != getInit().getType())
     return emitOpError("result type must match init type");
 

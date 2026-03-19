@@ -4,15 +4,16 @@
 // See https://llvm.org/LICENSE.txt for license information.
 // SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 //
-// IREE Executable Plugin interface for the MIPS matmul kernel.
+// IREE Executable Plugin interface for the MIPS matmul kernels.
 //
-// This file wires my_matmul_kernel into the IREE HAL plugin ABI so the
-// function can be resolved at runtime via --executable_plugin.
+// Registers both the f32 and INT8 kernels:
+//   my_matmul_kernel      — f32 matmul
+//   my_matmul_kernel_i8   — INT8 (i8 inputs, i32 accumulator) matmul
 //
-// Build as a shared library alongside matmul_kernel.c:
+// Build as a shared library alongside matmul_kernel.c and matmul_kernel_i8.c:
 //   clang --target=riscv64-linux-gnu -march=rv64gcv -mabi=lp64d \
 //         -O2 -fPIC -shared -nostdinc ... \
-//         matmul_kernel.c matmul_plugin.c -o librvv_matmul.so
+//         matmul_kernel.c matmul_kernel_i8.c matmul_plugin.c -o librvv_matmul.so
 
 #include "matmul_kernel.h"
 
@@ -26,6 +27,7 @@
 // where params_ptr points to a packed struct matching the func.call ABI
 // emitted by MIPSBufferizableOpInterface::bufferize() → decomposeMemref2D().
 
+// ── f32 kernel args ──────────────────────────────────────────────────────────
 typedef struct {
   float   *A;
   int64_t  A_off, A_s0, A_s1;
@@ -45,6 +47,29 @@ static int matmul_kernel_import(void *params_ptr, void *context,
                    a->B, a->B_off, a->B_s0, a->B_s1,
                    a->C, a->C_off, a->C_s0, a->C_s1,
                    a->M, a->N, a->K);
+  return 0;
+}
+
+// ── INT8 kernel args ──────────────────────────────────────────────────────────
+typedef struct {
+  int8_t  *A;
+  int64_t  A_off, A_s0, A_s1;
+  int8_t  *B;
+  int64_t  B_off, B_s0, B_s1;
+  int32_t *C;
+  int64_t  C_off, C_s0, C_s1;
+  int64_t  M, N, K;
+} matmul_i8_kernel_args_t;
+
+static int matmul_i8_kernel_import(void *params_ptr, void *context,
+                                   void *reserved) {
+  (void)context;
+  (void)reserved;
+  const matmul_i8_kernel_args_t *a = (const matmul_i8_kernel_args_t *)params_ptr;
+  my_matmul_kernel_i8(a->A, a->A_off, a->A_s0, a->A_s1,
+                      a->B, a->B_off, a->B_s0, a->B_s1,
+                      a->C, a->C_off, a->C_s0, a->C_s1,
+                      a->M, a->N, a->K);
   return 0;
 }
 
@@ -81,6 +106,9 @@ static iree_hal_executable_plugin_status_t plugin_resolve(
     if (iree_hal_executable_plugin_strcmp(name, "my_matmul_kernel") == 0) {
       params->out_fn_ptrs[i] = matmul_kernel_import;
       params->out_fn_contexts[i] = NULL;
+    } else if (iree_hal_executable_plugin_strcmp(name, "my_matmul_kernel_i8") == 0) {
+      params->out_fn_ptrs[i] = matmul_i8_kernel_import;
+      params->out_fn_contexts[i] = NULL;
     } else {
       if (!optional) any_required_not_found = true;
     }
@@ -102,7 +130,7 @@ iree_hal_executable_plugin_query(
   static const iree_hal_executable_plugin_header_t header = {
       .version     = IREE_HAL_EXECUTABLE_PLUGIN_VERSION_LATEST,
       .name        = "mips_matmul",
-      .description = "RISC-V RVV 1.0 matmul kernel plugin",
+      .description = "RISC-V RVV 1.0 matmul kernel plugin (f32 + INT8)",
       .features    = IREE_HAL_EXECUTABLE_PLUGIN_FEATURE_STANDALONE,
       .sanitizer   = IREE_HAL_EXECUTABLE_PLUGIN_SANITIZER_KIND,
   };

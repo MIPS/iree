@@ -4,16 +4,18 @@
 # See https://llvm.org/LICENSE.txt for license information.
 # SPDX-License-Identifier: Apache-2.0 WITH LLVM-exception
 
-# Shared library containing the MIPS custom matmul kernel.
+# Shared library containing the MIPS custom matmul kernels.
 #
-# matmul_kernel.c — RVV (or scalar fallback) compute kernel; no IREE headers.
-# matmul_plugin.c — IREE HAL executable plugin interface.
+# matmul_kernel.c    — RVV f32 (or scalar fallback) compute kernel; no IREE headers.
+# matmul_kernel_i8.c — RVV INT8 widening compute kernel; no IREE headers.
+# matmul_plugin.c    — IREE HAL executable plugin interface for both kernels.
 #
 # The plugin is loaded at runtime via:
 #   iree-run-module --executable_plugin=libmips_matmul.so ...
 
 add_library(mips_matmul SHARED
   matmul_kernel.c
+  matmul_kernel_i8.c
   matmul_plugin.c
 )
 
